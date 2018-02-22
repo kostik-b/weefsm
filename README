@@ -1,0 +1,15 @@
+1. The purpose of this library is to provide a simple
+   object-oriented finite state machine in c.
+   The idea is simple: the user has to define states 
+   and events (return values) as positive enumerations.
+   Also the user has to define actions which are triggered
+   upon a state transitiont. The actions' return values are
+   events. These events can be also explicitly fed into the state
+   machinel.
+   The states, events and actions are tied together with the help
+   of wfsm_add_transition function.
+   A NOP event has to be explicitly set. This is needed for cases,
+   when an event returns a value and the FSM needs to make decision
+   whether it should continue with transitions or whether it should
+   return.
+2. License is LGPL v3.

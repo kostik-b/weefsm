@@ -1,4 +1,4 @@
-// Copyright QUB 2017
+// Copyright Konstantin Bakanov 2017
 
 typedef enum scheduler_states
 {
@@ -27,18 +27,19 @@ typedef scheduler_events
 int main (int argc, char** argv)
 {
   // 1. create the fsm
-  fsm* state_machine = fsm_create ();
+  wfsm state_machine = wfsm_create ();
+  wfsm_set_nop_event (state_machine, NOP);
   // 2. create the states (just an enum)
   // 3. create the events (the return values)
   //    (events trigger actions)
   // 4. connect the states with events and corresponding actions
-
+  
   configure_action* c_ac = configure_action_create ();
-  fsm_add_transition (fsm, INITIAL, CONFIGURING, START, c_ac);
+  wfsm_add_transition (wfsm, INITIAL, CONFIGURING, START, c_ac);
 
 
   // now the usage part
-  fsm_process_event (fsm, START);
+  wfsm_process_event (wfsm, START);
 
   return 0;
 }
