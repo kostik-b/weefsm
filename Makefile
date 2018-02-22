@@ -1,4 +1,4 @@
-# Copyright QUB 2014
+# Copyright Konstantin Bakanov 2018
 
 .PHONY : clean uninstall
 
