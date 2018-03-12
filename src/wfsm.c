@@ -1,28 +1,34 @@
 // Copyright Konstantin Bakanov 2017
 
 #include "wfsm.h"
+#include <stdio.h>
+#include <string.h>
+
+#define WFSM_DEBUG 1
 
 // the below macro resizes any array really and copies the
 // contents of the old array over if it does exist
 // it does NOT update the size of the array
 #define RESIZE_PTR_ARRAY(ELEM_TYPE, arr_ptr, prev_size, new_size)\
-  ELEM_TYPE* temp_arr = calloc (new_size, sizeof (ELEM_TYPE));   \
-  if ((prev_size > 0) && (arr_ptr))                              \
-  { \
-    memcpy (temp_arr, arr_ptr, prev_size * sizeof (ELEM_TYPE));  \
-    free (arr_ptr);                                              \
-  } \
-  arr_ptr = temp_arr;
+  {                                                                \
+    ELEM_TYPE* temp_arr = calloc (new_size, sizeof (ELEM_TYPE));   \
+    if ((prev_size > 0) && (arr_ptr))                              \
+    { \
+      memcpy (temp_arr, arr_ptr, prev_size * sizeof (ELEM_TYPE));  \
+      free (arr_ptr);                                              \
+    } \
+    arr_ptr = temp_arr;                                            \
+  }
 
 typedef struct transition
 {
-  int     m_end_state;
-  action* m_action;
+  unsigned  m_end_state;
+  action*   m_action;
 } transition;
 
 typedef struct wfsm_impl
 {
-  transition***       m_transition_table; // first index is the starting state
+  transition***       m_transitions_table; // first index is the starting state
                                     // second one is the event
                                     // the last * is referring to a transition
   size_t              m_table_size; // num of states (first index)
@@ -33,26 +39,25 @@ typedef struct wfsm_impl
   // to specify states with strings and we generate the 
   // int values ourselves
   const char**        m_state_names;
+  size_t              m_string_states_size;
 } wfsm_impl;
 
 wfsm_impl* wfsm_create ()
 {
-  wfsm_impl* self = malloc (sizeof (wfsm_impl));
+  wfsm_impl* self = calloc (1, sizeof (wfsm_impl));
   if (!self)
   {
     return NULL;
   }
 
-  self->m_transition_table = NULL;
-  self->m_table_size       = 0;
-  self->m_events_size      = NULL;
-  self->m_current_state    = 0;
-  self->m_nop_event        = 0;
+#ifdef WFSM_DEBUG
+  printf ("Created the wfsm\n");
+#endif
 
   return self;
 }
 
-wfsm_rc  wfsm_add_transition  (
+static wfsm_rc  wfsm_add_transition  (
   wfsm_impl* self,
   const unsigned  start_state,
   const unsigned  end_state,
@@ -69,13 +74,21 @@ wfsm_rc  wfsm_add_transition  (
   // 3. finally add the transition unless it already exists
   //    in which case replace it over
 
+#ifdef WFSM_DEBUG
+  printf ("Inserting new transition into transitions table\n");
+#endif
+
   // 1. indexing the starting state
   if (self->m_table_size < start_state + 1)
   {
     const size_t new_table_size = start_state + 1;
 
+#ifdef WFSM_DEBUG
+    printf ("  Resizing table to new size %u\n", new_table_size);
+#endif
+
     // allocate the new table (starting states)
-    RESIZE_PTR_ARRAY (transition**, self->m_transition_table,
+    RESIZE_PTR_ARRAY (transition**, self->m_transitions_table,
                                     self->m_table_size,
                                     new_table_size);
 
@@ -87,24 +100,30 @@ wfsm_rc  wfsm_add_transition  (
     self->m_table_size = new_table_size;
   }
   // 2. indexing the event
-  if (self->m_events_sizes[start_state] < 1)
+  if (self->m_events_sizes[start_state] < event + 1)
   {
+#ifdef WFSM_DEBUG
+    printf ("  Resizing events array to %u\n", event + 1);
+#endif
     // need to resize also
     RESIZE_PTR_ARRAY (transition*,
-                      self->m_transition_table[start_state],
-                      (self->m_events_sizes[start_state],
+                      self->m_transitions_table[start_state],
+                      self->m_events_sizes[start_state],
                       event + 1);
     self->m_events_sizes[start_state] = event + 1;
   }
   // 3. ... and finally here is the transition itself
-  if (self->m_transition_table[start_state][event] == NULL)
+  if (self->m_transitions_table[start_state][event] == NULL)
   {
+#ifdef WFSM_DEBUG
+    printf ("  Creating the actual transition\n");
+#endif
     // create a transition
     transition* tr = malloc (sizeof (transition));
     tr->m_end_state = end_state;
     tr->m_action    = ac;
 
-    self->m_transition_table[start_state][event] = tr;
+    self->m_transitions_table[start_state][event] = tr;
     return FSM_SUCCESS;
   }
   else
@@ -112,27 +131,77 @@ wfsm_rc  wfsm_add_transition  (
     return FSM_ERROR_TRANSITION_EXISTS;
   }
 }
-// this is an "internal" function
-wfsm_rc wfsm_set_state(
-  wfsm            self,
-  const unsigned  default_state)
+
+static unsigned add_new_state (
+  wfsm        self,
+  const char* state_string)
 {
-  if (default_state > self->m_table_size - 1)
+#ifdef WFSM_DEBUG
+  printf ("Adding new state idx %u for string %s\n", self->m_string_states_size, state_string);
+#endif
+
+  const unsigned state_index = self->m_string_states_size;
+  RESIZE_PTR_ARRAY (const char*, self->m_state_names,
+                  self->m_string_states_size,
+                  self->m_string_states_size + 1);
+
+  self->m_state_names[state_index] = strdup(state_string);
+  self->m_string_states_size += 1;
+
+  return state_index;
+}
+
+// this is an "internal" function
+static wfsm_rc wfsm_set_state(
+  wfsm            self,
+  const unsigned  state)
+{
+  // at least some sort of check
+  if (state > self->m_table_size - 1)
   {
     return FSM_ERROR_START_STATE_DOES_NOT_EXIST;
   }
-  else
-  {
-    self->m_current_state = default_state;
-    return FSM_SUCCESS;
-  }
+
+  self->m_current_state = state;
+  return FSM_SUCCESS;
 }
+
 // this is an "external" function - just a different name really
 wfsm_rc wfsm_set_default_state(
-  wfsm            self,
-  const unsigned  default_state)
+  wfsm        self,
+  const char* default_state)
 {
-  return wfsm_set_state (self, default_state);
+  int default_state_idx = -1;  
+  for (int i = 0; i < self->m_string_states_size; ++i)
+  {
+    if (strcmp (default_state, self->m_state_names[i]) == 0)
+    {
+      default_state_idx = i;
+      break;
+    }
+  }
+
+  if (default_state_idx < 0)
+  {
+    default_state_idx = add_new_state (self, default_state);
+  }
+
+  return wfsm_set_state (self, (unsigned)default_state_idx);
+}
+
+static const char* get_state_str (
+  wfsm           self,
+  const unsigned state_idx)
+{
+  if (self->m_state_names && (state_idx < self->m_string_states_size)
+          && self->m_state_names[state_idx])
+  {
+    return self->m_state_names[state_idx];
+  }
+  else
+  {
+    return "";
+  }
 }
 
 wfsm_rc wfsm_process_event (wfsm self, const unsigned event)
@@ -142,23 +211,42 @@ wfsm_rc wfsm_process_event (wfsm self, const unsigned event)
   unsigned current_event = event;
   do
   {
-    if (current_event > self->m_event_sizes[self->m_current_state] - 1)
+#ifdef WFSM_DEBUG
+    printf ("Processing event %u, current state is %s\n", current_event, get_state_str (self, self->m_current_state));
+#endif
+    if (current_event > self->m_events_sizes[self->m_current_state] - 1)
     {
       return FSM_ERROR_EVENT;
     }
     if (self->m_transitions_table[self->m_current_state][current_event] == NULL)
     {
+#ifdef WFSM_DEBUG
+    printf ("There is no transition defined for event %u from state %s\n",
+                    current_event, get_state_str (self, self->m_current_state));
+#endif
       return FSM_ERROR_TRANSITION_DOES_NOT_EXIST;
     }
-    // 3. invoke action
+    // 3. move to the next state
     transition* tr = self->m_transitions_table[self->m_current_state][current_event];
-    current_event = *(tr->action->process_event)(tr->action, current_event); 
-    // 4. move to the next state
     wfsm_rc rc = wfsm_set_state (self, tr->m_end_state);
     if (rc != FSM_SUCCESS)
     {
       return rc;
     }
+    // 4. invoke action
+    if (tr->m_action == NULL)
+    {
+      current_event = self->m_nop_event;
+    }
+    else
+    {
+      current_event = (*(tr->m_action->process_event))(tr->m_action, current_event); 
+    }
+#ifdef WFSM_DEBUG
+  printf ("Finished executing action. The new event is %u. It is %s a NOP event\n", current_event,
+                      (current_event == self->m_nop_event) ? "" : "NOT");
+  
+#endif
   } while (current_event != self->m_nop_event);
 
   return FSM_SUCCESS;
@@ -166,22 +254,7 @@ wfsm_rc wfsm_process_event (wfsm self, const unsigned event)
 
 void wfsm_set_nop_event (wfsm self, const unsigned event)
 {
-  self->m_nop_event (event);
-}
-
-static unsigned add_new_state (
-  wfsm        self,
-  const char* state_string)
-{
-  const unsigned state_index = self->m_string_states_size;
-  RESIZE_PTR_ARR (const char*, self->m_string_states,
-                  self->m_string_states_size,
-                  self->m_string_states_size + 1);
-
-  self->m_string_states[state_index] = state_string;
-  self->m_string_states_size += 1;
-
-  return state_index;
+  self->m_nop_event = event;
 }
 
 wfsm_rc wfsm_add_transition_str(
@@ -195,13 +268,17 @@ wfsm_rc wfsm_add_transition_str(
   int start_state_idx = -1;
   int end_state_idx   = -1;
 
+#ifdef WFSM_DEBUG
+  printf ("Adding transition %s -> %s (%u)\n", start_state, end_state, event);
+#endif
+
   for (int i = 0; i < self->m_string_states_size; ++i)
   {
-    if (strcmp (start_state, self->m_string_states[i]) == 0)
+    if (strcmp (start_state, self->m_state_names[i]) == 0)
     {
       start_state_idx = i;
     }
-    if (strcmp (end_state, self->m_string_states[i]) == 0)
+    if (strcmp (end_state, self->m_state_names[i]) == 0)
     {
       end_state_idx = i;
     }
@@ -223,6 +300,11 @@ wfsm_rc wfsm_add_transition_str(
   {
     return FSM_FAILURE;
   }
+
+#ifdef WFSM_DEBUG
+  printf ("State %s has idx of %d\n", start_state, start_state_idx);
+  printf ("State %s has idx of %d\n", end_state,   end_state_idx);
+#endif
 
   return wfsm_add_transition (self, start_state_idx, end_state_idx, event, ac);
 }

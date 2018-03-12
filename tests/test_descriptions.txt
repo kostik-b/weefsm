@@ -1,0 +1,16 @@
+The tests we need to do.
+
+basic_test:
+1. Imagine a simple network application, that has to read a message,
+   analyze it and either generate a positive reply or an error.
+2. Name each state and transitions:
+    listening -> reading | on io
+    reading -> listening | on csum failed
+    reading -> processing | on csum succeeded
+    processing -> reply_handshake | on success processing
+    processing -> reply_error     | on failure processing
+    reply_handshake -> listening | in any case
+    reply_error -> listening     | in any case
+3. When adding transition, print the start and end idx + action idx.
+4. When performing transition, print start and end idx and action.
+5. Each action should have its name as m_impl.
